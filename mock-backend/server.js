@@ -13,17 +13,24 @@ const fastify = require("fastify")({
 
 // Import shared error handling
 const { registerProcessLevelHandlers } = require("../shared/errorWrapper");
-const { logger } = require("../shared/cloudWatchLogger");
-const { httpLoggingMiddleware, errorLoggingHook } = require("../shared/httpLoggingMiddleware");
+const { logger, setCorrelationId } = require("../shared/cloudWatchLogger");
 
 // Register process-level error handlers (unhandledRejection, uncaughtException)
 registerProcessLevelHandlers();
 
 // ─────────────────────────────────────────
-// HTTP Logging Middleware (replaces manual correlation ID hook)
-// Automatically logs all requests/responses and manages context
+// Correlation ID Hook
 // ─────────────────────────────────────────
-fastify.addHook("preHandler", httpLoggingMiddleware);
+
+fastify.addHook("preHandler", async (request, reply) => {
+  const correlationId = request.headers["x-correlation-id"];
+  if (!correlationId) {
+    logger.warn("Missing correlation ID in Mock Backend request");
+  }
+  setCorrelationId(correlationId);
+  // Store on request for access in routes
+  request.correlationId = correlationId;
+});
 
 // ─────────────────────────────────────────
 // JWT Plugin Register karo
@@ -39,21 +46,15 @@ fastify.register(require("./routes/auth"), { prefix: "/oauth" });
 fastify.register(require("./routes/resources"), { prefix: "/resources" });
 
 // ─────────────────────────────────────────
-// Fastify Global Error Handler with Enhanced Logging
+// Fastify global error handler
 // ─────────────────────────────────────────
-fastify.setErrorHandler(async (error, request, reply) => {
-  // Use enhanced error logging hook
-  await errorLoggingHook(request, reply, error);
-  
-  // Set appropriate status code
-  const statusCode = error.statusCode || 500;
-  
-  // respond with generic message to avoid leaking internals
-  reply.status(statusCode).send({ 
-    error: error.message || "Internal Server Error",
-    requestId: request.requestId,
-    correlationId: request.correlationId,
+fastify.setErrorHandler(function (error, request, reply) {
+  logger.error("Fastify error", {
+    error: error && error.message ? error.message : String(error),
   });
+  fastify.log.error(error);
+  // respond with generic message to avoid leaking internals
+  reply.status(500).send({ error: "Internal Server Error" });
 });
 // ─────────────────────────────────────────
 // Health Check
