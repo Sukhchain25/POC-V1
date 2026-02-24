@@ -95,9 +95,43 @@ const putMetric = async (
   }
 };
 
+/**
+ * Log structured error with error code following FIS standards
+ */
+const logError = (message, errorCode, context = {}) => {
+  logger.error(message, {
+    errorCode,
+    correlationId: currentCorrelationId,
+    ...context,
+  });
+};
+
+/**
+ * Log structured info with error code context
+ */
+const logInfo = (message, context = {}) => {
+  logger.info(message, {
+    correlationId: currentCorrelationId,
+    ...context,
+  });
+};
+
+/**
+ * Log structured warning with error code context
+ */
+const logWarn = (message, context = {}) => {
+  logger.warn(message, {
+    correlationId: currentCorrelationId,
+    ...context,
+  });
+};
+
 module.exports = {
   putMetric,
   logger,
   setCorrelationId,
   getCorrelationId,
+  logError,
+  logInfo,
+  logWarn,
 };

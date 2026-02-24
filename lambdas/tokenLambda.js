@@ -1,12 +1,16 @@
 const axios = require("axios");
 const { SignJWT, jwtVerify } = require("jose");
 
-const { v4: uuidv4 } = require("uuid");
 const {
   putMetric,
   logger,
+  logError,
+  logInfo,
+  logWarn,
   setCorrelationId,
 } = require("../shared/cloudWatchLogger");
+const { handleError, AppError } = require("../shared/errorWrapper");
+const { ERROR_CODES } = require("../shared/errorCodes");
 
 const MOCK_BACKEND_URL = "http://localhost:4000";
 
@@ -15,7 +19,7 @@ const JOSE_SECRET = new TextEncoder().encode(
   "my-super-secret-jose-key-32chars!!",
 );
 
-module.exports.handler = async (event) => {
+module.exports.handler = async (event, context) => {
   // Extract or generate correlation ID (prefer UUID)
   // Require correlation ID from upstream, never generate a new one
   const correlationId = event.headers?.["x-correlation-id"];
@@ -24,26 +28,33 @@ module.exports.handler = async (event) => {
   }
   setCorrelationId(correlationId);
 
-  logger.info("Token Lambda triggered", {
+  logInfo("Token Lambda triggered", {
     requestId: event.requestContext?.requestId,
   });
   const startTime = Date.now();
 
   try {
+    if (!event.body) {
+      throw new AppError(
+        "Request body is required",
+        400,
+        ERROR_CODES.MISSING_BODY,
+      );
+    }
+
     const body = JSON.parse(event.body);
     const { paymentData } = body;
     let accessToken; // Declare accessToken for use across steps
 
     if (!paymentData) {
-      logger.warn("Token Lambda: paymentData is required");
-      await putMetric("TokenValidationError", 1, "Count", [
-        { Name: "ErrorType", Value: "MissingPaymentData" },
-      ]);
-      return {
-        statusCode: 400,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error: "paymentData is required" }),
-      };
+      logWarn("Token Lambda: paymentData is required", {
+        errorCode: ERROR_CODES.MISSING_BODY,
+      });
+      throw new AppError(
+        "paymentData is required",
+        400,
+        ERROR_CODES.MISSING_BODY,
+      );
     }
 
     // ─────────────────────────────────────────
@@ -75,9 +86,13 @@ module.exports.handler = async (event) => {
         { Name: "Status", Value: "Success" },
       ]);
     } catch (error) {
-      logger.error("Token Lambda: Step 1 - OAuth token fetch failed", {
-        error: error.message,
-      });
+      logError(
+        "Token Lambda: Step 1 - OAuth token fetch failed",
+        ERROR_CODES.SERVICE_UNAVAILABLE,
+        {
+          errorMessage: error.message,
+        },
+      );
       await putMetric("OAuthTokenFetch", 1, "Count", [
         { Name: "Status", Value: "Failed" },
       ]);
@@ -96,7 +111,9 @@ module.exports.handler = async (event) => {
       .setAudience("mock-backend")
       .sign(JOSE_SECRET);
 
-    logger.info("Token Lambda: Step 2 - JOSE signed token created ✓");
+    logInfo("Token Lambda: Step 2 - JOSE signed token created ✓", {
+      status: "success",
+    });
     await putMetric("JOSESigningSuccess", 1, "Count");
 
     // ─────────────────────────────────────────
@@ -136,9 +153,13 @@ module.exports.handler = async (event) => {
         }),
       };
     } catch (error) {
-      logger.error("Token Lambda: Step 3 - Mock backend call failed", {
-        error: error.message,
-      });
+      logError(
+        "Token Lambda: Step 3 - Mock backend call failed",
+        ERROR_CODES.SERVICE_UNAVAILABLE,
+        {
+          errorMessage: error.message,
+        },
+      );
       await putMetric("MockBackendCallError", 1, "Count", [
         { Name: "ErrorType", Value: "MockBackendFailed" },
       ]);
@@ -146,20 +167,21 @@ module.exports.handler = async (event) => {
     }
   } catch (err) {
     const duration = Date.now() - startTime;
-    logger.error("Token Lambda error", {
-      error: err.message,
-      duration,
-    });
+    logError(
+      "Token Lambda error",
+      err.errorCode || ERROR_CODES.INTERNAL_ERROR,
+      {
+        errorMessage: err.message,
+        duration,
+      },
+    );
     await putMetric("TokenLambdaError", 1, "Count", [
       { Name: "ErrorType", Value: err.message.split(":")[0] },
     ]);
     await putMetric("TokenLambdaDuration", duration, "Milliseconds");
 
-    return {
-      statusCode: 500,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: err.message }),
-    };
+    // Use standardized error handler
+    return handleError(err, event.requestContext || event, "/api/v1/token");
   }
 };
 

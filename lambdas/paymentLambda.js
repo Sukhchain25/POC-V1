@@ -4,42 +4,54 @@ const { v4: uuidv4 } = require("uuid");
 const {
   putMetric,
   logger,
+  logError,
+  logInfo,
+  logWarn,
   setCorrelationId,
 } = require("../shared/cloudWatchLogger");
+const { handleError, AppError } = require("../shared/errorWrapper");
+const { ERROR_CODES } = require("../shared/errorCodes");
 
 const MOCK_BACKEND_URL = "http://localhost:4000";
 const TOKEN_LAMBDA_URL = "http://localhost:3000/dev/token";
 
-module.exports.handler = async (event) => {
+module.exports.handler = async (event, context) => {
   // Only Payment Lambda generates UUID if not present
   const correlationId = event.headers?.["x-correlation-id"] || uuidv4();
   setCorrelationId(correlationId);
 
-  logger.info("Payment Lambda triggered", {
+  logInfo("Payment Lambda triggered", {
     requestId: event.requestContext?.requestId,
   });
   const startTime = Date.now();
 
   try {
+    if (!event.body) {
+      throw new AppError(
+        "Request body is required",
+        400,
+        ERROR_CODES.MISSING_BODY,
+      );
+    }
+
     const body = JSON.parse(event.body);
     const { encryption, paymentData } = body;
 
     if (!paymentData) {
-      logger.warn("Payment Lambda: paymentData is required");
-      await putMetric("PaymentValidationError", 1, "Count", [
-        { Name: "ErrorType", Value: "MissingPaymentData" },
-      ]);
-      return {
-        statusCode: 400,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error: "paymentData is required" }),
-      };
+      logWarn("Payment Lambda: paymentData is required", {
+        errorCode: ERROR_CODES.MISSING_BODY,
+      });
+      throw new AppError(
+        "paymentData is required",
+        400,
+        ERROR_CODES.MISSING_BODY,
+      );
     }
 
     let finalResponse;
 
     if (encryption === true) {
-      logger.info("Payment Lambda: Encryption enabled, calling Token Lambda");
+      logInfo("Payment Lambda: Encryption enabled, calling Token Lambda");
 
       // Token Lambda ko call karo — woh JOSE encrypt karega aur mock backend pe bhejega
       try {
@@ -55,19 +67,23 @@ module.exports.handler = async (event) => {
           },
         );
         finalResponse = tokenResponse.data;
-        logger.info("Payment Lambda: Token Lambda call successful");
+        logInfo("Payment Lambda: Token Lambda call successful");
         await putMetric("TokenLambdaCallSuccess", 1, "Count");
       } catch (error) {
-        logger.error("Payment Lambda: Token Lambda call failed", {
-          error: error.message,
-        });
+        logError(
+          "Payment Lambda: Token Lambda call failed",
+          ERROR_CODES.SERVICE_UNAVAILABLE,
+          {
+            errorMessage: error.message,
+          },
+        );
         await putMetric("TokenLambdaCallError", 1, "Count", [
           { Name: "ErrorType", Value: "TokenLambdaFailed" },
         ]);
         throw error;
       }
     } else {
-      logger.info(
+      logInfo(
         "Payment Lambda: Encryption disabled, calling Mock Backend directly",
       );
 
@@ -85,12 +101,16 @@ module.exports.handler = async (event) => {
           },
         );
         finalResponse = response.data;
-        logger.info("Payment Lambda: Mock Backend call successful");
+        logInfo("Payment Lambda: Mock Backend call successful");
         await putMetric("MockBackendCallSuccess", 1, "Count");
       } catch (error) {
-        logger.error("Payment Lambda: Mock Backend call failed", {
-          error: error.message,
-        });
+        logError(
+          "Payment Lambda: Mock Backend call failed",
+          ERROR_CODES.SERVICE_UNAVAILABLE,
+          {
+            errorMessage: error.message,
+          },
+        );
         await putMetric("MockBackendCallError", 1, "Count", [
           { Name: "ErrorType", Value: "MockBackendFailed" },
         ]);
@@ -99,7 +119,7 @@ module.exports.handler = async (event) => {
     }
 
     const duration = Date.now() - startTime;
-    logger.info("Payment Lambda: Success", { duration });
+    logInfo("Payment Lambda: Success", { duration });
     await putMetric("PaymentSuccess", 1, "Count");
     await putMetric("PaymentDuration", duration, "Milliseconds");
 
@@ -114,20 +134,21 @@ module.exports.handler = async (event) => {
     };
   } catch (err) {
     const duration = Date.now() - startTime;
-    logger.error("Payment Lambda error", {
-      error: err.message,
-      duration,
-    });
+    logError(
+      "Payment Lambda error",
+      err.errorCode || ERROR_CODES.INTERNAL_ERROR,
+      {
+        errorMessage: err.message,
+        duration,
+      },
+    );
     await putMetric("PaymentError", 1, "Count", [
       { Name: "ErrorType", Value: err.message.split(":")[0] },
     ]);
     await putMetric("PaymentDuration", duration, "Milliseconds");
 
-    return {
-      statusCode: 500,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: err.message }),
-    };
+    // Use standardized error handler
+    return handleError(err, event.requestContext || event, "/api/v1/payment");
   }
 };
 
