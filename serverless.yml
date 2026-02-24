@@ -1,0 +1,55 @@
+service: poc-payment
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: dev
+  region: ap-south-1
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+
+functions:
+  payment:
+    handler: lambdas/paymentLambda.handler
+    environment:
+      CLOUDWATCH_ENABLED: "true"
+      LOG_LEVEL: "INFO"
+      AWS_ENVIRONMENT: "dev"
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          - cloudwatch:PutMetricData
+        Resource: "*"
+    events:
+      - http:
+          path: /payment
+          method: post
+          cors: true
+
+  token:
+    handler: lambdas/tokenLambda.handler
+    environment:
+      CLOUDWATCH_ENABLED: "true"
+      LOG_LEVEL: "INFO"
+      AWS_ENVIRONMENT: "dev"
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          - cloudwatch:PutMetricData
+        Resource: "*"
+    events:
+      - http:
+          path: /token
+          method: post
+          cors: true

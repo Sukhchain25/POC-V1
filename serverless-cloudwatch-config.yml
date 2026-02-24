@@ -1,0 +1,42 @@
+resources:
+  Resources:
+    # CloudWatch Dashboard
+    PaymentSystemDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: POC-Payment-System
+        DashboardBody:
+          Fn::Sub: |
+            {
+              "widgets": [
+                {
+                  "type": "metric",
+                  "properties": {
+                    "metrics": [
+                      ["POC-Payment-System", "TokenLambda-Duration"],
+                      [".", "PaymentLambda-Duration"],
+                      [".", "TokenLambda-Error"],
+                      [".", "PaymentLambda-Error"]
+                    ],
+                    "period": 300,
+                    "stat": "Average",
+                    "region": "${self:provider.region}",
+                    "title": "Lambda Performance"
+                  }
+                }
+              ]
+            }
+
+    # CloudWatch Alarm for Errors
+    PaymentLambdaErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: PaymentLambda-HighErrorRate
+        MetricName: PaymentLambda-Error
+        Namespace: POC-Payment-System
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 5
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching

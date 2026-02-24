@@ -1,0 +1,22 @@
+{
+  "name": "poc-payment-lambdas",
+  "version": "1.0.0",
+  "description": "POC - Payment Lambda with JOSE encryption",
+  "main": "index.js",
+  "scripts": {
+    "start": "serverless offline start",
+    "deploy": "serverless deploy"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.992.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.992.0",
+    "axios": "^1.6.0",
+    "jose": "^5.2.0",
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0",
+    "winston-cloudwatch": "^6.3.0"
+  },
+  "devDependencies": {
+    "serverless-offline": "^13.3.0"
+  }
+}
